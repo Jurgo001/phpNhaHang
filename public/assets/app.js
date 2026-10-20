@@ -244,4 +244,53 @@ document.querySelectorAll('[data-payment-qr]').forEach(function (element) {
         new QRCode(element, { text: element.dataset.paymentQr, width: 256, height: 256, correctLevel: QRCode.CorrectLevel.M });
         element.querySelectorAll('img').forEach(function (img) { img.alt = 'QR chuyển khoản MB Bank theo số tiền và mã đơn'; });
     }
+}
+);
+// Gắn sự kiện lắng nghe toàn bộ trang web (hoạt động kể cả khi phân trang hay tìm kiếm Ajax)
+document.addEventListener('submit', function(e) {
+    const form = e.target;
+    
+    // Nếu form được bấm là form "Thêm món" (có chữ /gio-hang/ và không phải nút xóa/cập nhật)
+    if (form.tagName === 'FORM' && form.action.includes('/gio-hang/') && !form.querySelector('input[name="_method"]')) {
+        e.preventDefault(); // Chặn việc tải lại trang
+        
+        const btn = form.querySelector('button');
+        const originalText = btn.innerText;
+        btn.innerText = 'Đang thêm...';
+        btn.disabled = true;
+
+        fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Đổi chữ nút thành "Đã thêm" trong 1.5 giây
+            btn.innerText = 'Đã thêm!';
+            setTimeout(() => {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }, 1500);
+
+            // CẬP NHẬT SỐ GIỎ HÀNG (SỬA LỖI TẠI ĐÂY)
+            if (data.success && data.count !== undefined) {
+                // Dùng querySelectorAll để tìm TẤT CẢ icon giỏ hàng (cả trên Mobile và PC)
+                const badges = document.querySelectorAll('.cart-nav-link .badge');
+                
+                // Vòng lặp cập nhật số lượng mới cho tất cả các icon tìm được
+                badges.forEach(badge => {
+                    badge.innerText = data.count;
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Lỗi khi thêm món:', error);
+            btn.innerText = originalText;
+            btn.disabled = false;
+        });
+    }
 });

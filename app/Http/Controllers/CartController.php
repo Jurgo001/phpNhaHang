@@ -32,19 +32,38 @@ class CartController extends Controller
         return view('cart.index', ['cart' => $cart, 'dishes' => $dishes, 'subtotal' => Money::decimal($subtotal), 'addresses' => $request->user()->addresses()->orderByDesc('is_default')->get(), 'token' => $request->session()->get('checkout_token'), 'redemptions' => $request->user()->redemptions()->with('voucher')->whereNull('used_at')->where('expires_at', '>', now())->orderBy('expires_at')->get()]);
     }
 
-    public function add(Request $request, Dish $dish): RedirectResponse
+    public function add(Request $request, Dish $dish): RedirectResponse|JsonResponse
     {
         abort_unless($dish->is_available, 404);
         $cart = $request->session()->get('cart', []);
+        
         if (! isset($cart[$dish->id]) && count($cart) >= 50) {
+            if ($request->expectsJson()) {
+                 return response()->json(['success' => false, 'message' => 'Giỏ hàng tối đa 50 món khác nhau.'], 422);
+            }
             throw ValidationException::withMessages(['cart' => 'Giỏ hàng tối đa 50 món khác nhau.']);
         }
+        
         $quantity = ($cart[$dish->id] ?? 0) + 1;
+        
         if ($quantity > 99) {
+            if ($request->expectsJson()) {
+                 return response()->json(['success' => false, 'message' => 'Mỗi món tối đa 99 phần.'], 422);
+            }
             throw ValidationException::withMessages(['cart' => 'Mỗi món tối đa 99 phần.']);
         }
+        
         $cart[$dish->id] = $quantity;
         $request->session()->put('cart', $cart);
+
+        // BỔ SUNG: Trả về JSON chứa tổng số món nếu gọi bằng Ajax/Fetch
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true, 
+                'message' => 'Đã thêm món vào giỏ.',
+                'count' => array_sum($cart)
+            ]);
+        }
 
         return back()->with('success', 'Đã thêm món vào giỏ.');
     }
@@ -54,6 +73,7 @@ class CartController extends Controller
         $data = $request->validate(['quantity' => ['required', 'integer', 'between:0,99']]);
         $cart = $request->session()->get('cart', []);
         abort_unless(isset($cart[$dish]) || ($request->expectsJson() && (int) $data['quantity'] === 0), 404);
+        
         if ((int) $data['quantity'] === 0) {
             unset($cart[$dish]);
         } else {
@@ -77,11 +97,20 @@ class CartController extends Controller
         return back()->with('success', 'Đã cập nhật số lượng.');
     }
 
-    public function destroy(Request $request, int $dish): RedirectResponse
+    public function destroy(Request $request, int $dish): RedirectResponse|JsonResponse
     {
         $cart = $request->session()->get('cart', []);
         unset($cart[$dish]);
         $request->session()->put('cart', $cart);
+
+        // BỔ SUNG: Hỗ trợ xóa món bằng Ajax
+        if ($request->expectsJson()) {
+             return response()->json([
+                'success' => true,
+                'message' => 'Đã bỏ món khỏi giỏ.',
+                'count' => array_sum($cart)
+             ]);
+        }
 
         return back()->with('success', 'Đã bỏ món khỏi giỏ.');
     }

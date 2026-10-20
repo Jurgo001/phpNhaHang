@@ -6,7 +6,22 @@
 <div class="card empty" data-cart-empty @if(count($cart)!==0) hidden @endif><p>Giỏ hàng đang trống.</p><a href="{{ route('menu') }}" class="btn btn-primary align-self-center">Chọn món ngay</a></div>
 @if(count($cart)!==0)
 <div class="row g-4" data-cart-content><div class="col-lg-8"><div class="card table-responsive"><table class="table mb-0 cart-table"><thead><tr><th scope="col">Món ăn</th><th scope="col" class="ui-numeric">Đơn giá</th><th scope="col" class="ui-numeric">Số lượng</th><th scope="col" class="ui-numeric">Thành tiền</th></tr></thead><tbody class="ui-table-body">
-@foreach($cart as $id=>$quantity)<tr data-cart-item="{{ $id }}" data-unit-price="{{ isset($dishes[$id]) ? \App\Support\Money::cents($dishes[$id]->price) : 0 }}"><td>{{ $dishes[$id]->name ?? 'Món đã bị xóa' }}@if(!isset($dishes[$id]) || !$dishes[$id]->is_available)<small class="d-block text-danger">Không còn phục vụ. Vui lòng giảm về 0 để bỏ món.</small>@endif</td><td class="ui-numeric" data-unit-price-label>{{ isset($dishes[$id]) ? \App\Support\Money::format($dishes[$id]->price) : '—' }}đ</td>
+@foreach($cart as $id=>$quantity)<tr data-cart-item="{{ $id }}" data-unit-price="{{ isset($dishes[$id]) ? \App\Support\Money::cents($dishes[$id]->price) : 0 }}">
+<td>
+    <!-- BỔ SUNG KHỐI HIỂN THỊ HÌNH ẢNH MÓN ĂN -->
+    <div class="d-flex align-items-center gap-3">
+        @if(isset($dishes[$id]))
+            <img src="{{ $dishes[$id]->imageUrl() }}" alt="{{ $dishes[$id]->name }}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 6px;">
+        @endif
+        <div>
+            {{ $dishes[$id]->name ?? 'Món đã bị xóa' }}
+            @if(!isset($dishes[$id]) || !$dishes[$id]->is_available)
+                <small class="d-block text-danger">Không còn phục vụ. Vui lòng giảm về 0 để bỏ món.</small>
+            @endif
+        </div>
+    </div>
+</td>
+<td class="ui-numeric" data-unit-price-label>{{ isset($dishes[$id]) ? \App\Support\Money::format($dishes[$id]->price) : '—' }}đ</td>
 <td><form method="post" action="{{ route('cart.update',$id) }}" class="quantity-stepper" data-quantity-form data-remove-confirm="Bạn có đồng ý xóa món này khỏi giỏ hàng không?">@csrf @method('PATCH')<button type="button" data-quantity-step="-1" class="btn btn-sm btn-outline-secondary" aria-label="Giảm {{ $dishes[$id]->name??'món' }}">−</button><input class="form-control quantity-value" type="number" name="quantity" value="{{ $quantity }}" min="0" max="99" step="1" inputmode="numeric" required aria-label="Số lượng {{ $dishes[$id]->name??'món' }}"><button type="button" data-quantity-step="1" class="btn btn-sm btn-outline-primary" aria-label="Tăng {{ $dishes[$id]->name??'món' }}" @disabled($quantity>=99)>+</button></form></td>
 <td class="ui-numeric price" data-line-total>{{ isset($dishes[$id]) ? \App\Support\Money::format(\App\Support\Money::decimal(\App\Support\Money::cents($dishes[$id]->price)*$quantity)) : '—' }}đ</td></tr>@endforeach
 </tbody></table></div><p class="text-muted small mt-3">Bấm −/+ hoặc nhập trực tiếp số lượng (1–99), tổng tiền tự cập nhật khi thay đổi. Nhập 0 cần xác nhận xóa.</p><a href="{{ route('menu') }}">← Tiếp tục chọn món</a></div>
