@@ -9,7 +9,10 @@ use App\Models\User;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Mail\Message;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -77,7 +80,23 @@ class AuthController extends Controller
         }
 
         try {
-            $status = Password::sendResetLink($data);
+            $status = Password::sendResetLink($data, function (User $user): void {
+                DB::transaction(function () use ($user): void {
+                    $account = User::query()->lockForUpdate()->findOrFail($user->id);
+                    $password = Str::random(16);
+                    $account->password = $password;
+                    $account->setRememberToken(Str::random(60));
+                    $account->save();
+
+                    Mail::raw(
+                        "Mật khẩu mới của bạn: {$password}\n\nDùng mật khẩu này để đăng nhập website nhà hàng. Sau đó vào Hồ sơ cá nhân → Đổi mật khẩu, nhập mật khẩu vừa nhận làm mật khẩu hiện tại và chọn mật khẩu mới.\n\nMật khẩu cũ đã được thay thế.",
+                        function (Message $message) use ($account): void {
+                            $message->to($account->email)->subject('Mật khẩu mới - Nhà Hàng Ngon');
+                        },
+                    );
+                    event(new PasswordReset($account));
+                });
+            });
         } catch (TransportExceptionInterface $exception) {
             $user = User::query()->where('email', $data['email'])->first();
             if ($user !== null) {
@@ -95,7 +114,7 @@ class AuthController extends Controller
             throw ValidationException::withMessages(['email' => __('passwords.failed')]);
         }
 
-        return back()->with('success', 'Nếu email đã đăng ký, bạn sẽ nhận được liên kết đặt lại mật khẩu. Vui lòng kiểm tra cả thư rác.');
+        return back()->with('success', 'Nếu email đã đăng ký, bạn sẽ nhận được mật khẩu mới qua email. Vui lòng kiểm tra cả thư rác.');
     }
 
     public function resetForm(Request $request, string $token): View

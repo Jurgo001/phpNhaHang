@@ -7,6 +7,7 @@ const cartMoney = cents => {
 };
 const cartRows = () => [...document.querySelectorAll('[data-cart-item]')];
 const renderCartTotals = () => {
+    if (!document.querySelector('[data-cart-status]')) { return; }
     let subtotal = 0;
     let count = 0;
     cartRows().forEach(row => {

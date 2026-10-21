@@ -56,7 +56,6 @@ class CartController extends Controller
         $cart[$dish->id] = $quantity;
         $request->session()->put('cart', $cart);
 
-        // BỔ SUNG: Trả về JSON chứa tổng số món nếu gọi bằng Ajax/Fetch
         if ($request->expectsJson()) {
             return response()->json([
                 'success' => true, 

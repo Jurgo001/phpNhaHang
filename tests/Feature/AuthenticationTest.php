@@ -3,11 +3,9 @@
 namespace Tests\Feature;
 
 use App\Models\User;
-use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Mail\Transport\ArrayTransport;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Password;
 use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -28,6 +26,7 @@ class AuthenticationTest extends TestCase
             'mail.mailers.smtp.password' => 'test-app-password',
             'mail.from.address' => 'sender@gmail.com',
         ]);
+        Mail::mailer()->setSymfonyTransport(new ArrayTransport);
     }
 
     public function test_customer_logs_in_with_hashed_password(): void
@@ -74,15 +73,6 @@ class AuthenticationTest extends TestCase
         $this->assertGuest();
     }
 
-    public function test_password_reset_sends_token_without_changing_password(): void
-    {
-        $user = User::factory()->create();
-        Notification::fake();
-        $this->post(route('password.email'), ['email' => $user->email])->assertSessionHas('success');
-        Notification::assertSentTo($user, ResetPassword::class);
-        $this->assertTrue(Hash::check('Demo@12345', $user->fresh()->password));
-    }
-
     public function test_valid_reset_token_changes_hashed_password(): void
     {
         $user = User::factory()->create();
@@ -94,9 +84,9 @@ class AuthenticationTest extends TestCase
     #[DataProvider('nonDeliveringMailers')]
     public function test_password_reset_does_not_claim_email_was_sent_with_a_non_delivering_mailer(string $mailer): void
     {
+        Mail::fake();
         config(['mail.default' => $mailer]);
         $user = User::factory()->create();
-        Notification::fake();
 
         $this->from(route('password.request'))
             ->post(route('password.email'), ['email' => $user->email])
@@ -104,7 +94,7 @@ class AuthenticationTest extends TestCase
             ->assertSessionHasErrors(['email' => __('passwords.unavailable')])
             ->assertSessionMissing('success');
 
-        Notification::assertNothingSent();
+        Mail::assertNothingSent();
         $this->assertDatabaseCount('password_reset_tokens', 0);
     }
 
@@ -118,40 +108,39 @@ class AuthenticationTest extends TestCase
 
     public function test_password_reset_rejects_missing_gmail_credentials(): void
     {
+        Mail::fake();
         config(['mail.mailers.smtp.password' => '']);
         $user = User::factory()->create();
-        Notification::fake();
 
         $this->post(route('password.email'), ['email' => $user->email])
             ->assertSessionHasErrors(['email' => __('passwords.unavailable')])
             ->assertSessionMissing('success');
 
-        Notification::assertNothingSent();
+        Mail::assertNothingSent();
         $this->assertDatabaseCount('password_reset_tokens', 0);
     }
 
     public function test_repeated_password_reset_requests_show_the_throttle_error(): void
     {
         $user = User::factory()->create();
-        Notification::fake();
 
         $this->post(route('password.email'), ['email' => $user->email])->assertSessionHas('success');
         $this->post(route('password.email'), ['email' => $user->email])
             ->assertSessionHasErrors(['email' => __('passwords.throttled')])
             ->assertSessionMissing('success');
 
-        Notification::assertSentToTimes($user, ResetPassword::class, 1);
+        $this->assertCount(1, Mail::mailer()->getSymfonyTransport()->messages());
     }
 
     public function test_unknown_password_reset_email_has_the_same_public_response(): void
     {
-        Notification::fake();
+        Mail::fake();
 
         $this->post(route('password.email'), ['email' => 'missing@gmail.com'])
-            ->assertSessionHas('success', 'Nếu email đã đăng ký, bạn sẽ nhận được liên kết đặt lại mật khẩu. Vui lòng kiểm tra cả thư rác.')
+            ->assertSessionHas('success', 'Nếu email đã đăng ký, bạn sẽ nhận được mật khẩu mới qua email. Vui lòng kiểm tra cả thư rác.')
             ->assertSessionHasNoErrors();
 
-        Notification::assertNothingSent();
+        Mail::assertNothingSent();
         $this->assertDatabaseCount('password_reset_tokens', 0);
     }
 
@@ -177,9 +166,11 @@ class AuthenticationTest extends TestCase
         $this->assertCount(1, $retryTransport->messages());
     }
 
-    public function test_delivered_email_contains_a_working_single_use_password_reset_link(): void
+    public function test_emailed_password_logs_in_and_can_be_changed_in_profile(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->create(['email' => 'customer@gmail.com', 'remember_token' => 'old-token']);
+        $oldResetToken = Password::createToken($user);
+        $this->travel(61)->seconds();
         $transport = new ArrayTransport;
         Mail::mailer()->setSymfonyTransport($transport);
 
@@ -187,21 +178,26 @@ class AuthenticationTest extends TestCase
         $this->assertCount(1, $transport->messages());
         $message = $transport->messages()->first()->getOriginalMessage();
         $this->assertSame($user->email, $message->getTo()[0]->getAddress());
-        $this->assertSame(1, preg_match('~https?://[^"\s]+/dat-lai-mat-khau/[^"\s]+~', $message->getHtmlBody(), $matches));
-        $resetUrl = html_entity_decode($matches[0], ENT_QUOTES);
-        $token = basename(parse_url($resetUrl, PHP_URL_PATH));
-        parse_str(parse_url($resetUrl, PHP_URL_QUERY), $query);
-        $this->assertSame($user->email, $query['email']);
-        $this->assertTrue(Hash::check('Demo@12345', $user->fresh()->password));
-        $this->get($resetUrl)->assertOk()->assertSee($user->email);
-
-        $credentials = ['token' => $token, 'email' => $user->email, 'password' => 'Changed@123', 'password_confirmation' => 'Changed@123'];
-        $this->post(route('password.update'), $credentials)->assertRedirect(route('login'));
-        $this->assertTrue(Hash::check('Changed@123', $user->fresh()->password));
+        $this->assertSame(1, preg_match('/Mật khẩu mới của bạn: (\S+)/u', $message->getTextBody(), $matches));
+        $password = $matches[1];
+        $this->assertSame(16, strlen($password));
+        $this->assertStringNotContainsString('/dat-lai-mat-khau/', $message->getTextBody());
+        $this->assertTrue(Hash::check($password, $user->fresh()->password));
         $this->assertFalse(Hash::check('Demo@12345', $user->fresh()->password));
-        $this->post(route('password.update'), $credentials)->assertSessionHasErrors('email');
-        $this->post(route('login.store'), ['email' => $user->email, 'password' => 'Changed@123'])->assertRedirect(route('menu'));
+        $this->assertNotSame('old-token', $user->fresh()->remember_token);
+        $this->assertFalse(Password::tokenExists($user, $oldResetToken));
+        $this->post(route('login.store'), ['email' => $user->email, 'password' => 'Demo@12345'])->assertSessionHasErrors('email');
+        $this->post(route('login.store'), ['email' => $user->email, 'password' => $password])->assertRedirect(route('menu'));
         $this->assertAuthenticatedAs($user);
+        $this->put(route('profile.update'), [
+            'name' => $user->name,
+            'email' => $user->email,
+            'current_password' => $password,
+            'password' => 'Personal@123',
+            'password_confirmation' => 'Personal@123',
+        ])->assertSessionHasNoErrors();
+        $this->assertTrue(Hash::check('Personal@123', $user->fresh()->password));
+        $this->assertFalse(Hash::check($password, $user->fresh()->password));
     }
 
     public function test_login_is_rate_limited(): void
